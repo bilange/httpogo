@@ -196,7 +196,7 @@ func ogc_sql(imprimante string, rapports []Rapport, attachmentExtension string) 
 	for i, rapport := range s {
 		err := sendEMail(rapports[i].Titre, rapport, rapports[i].EMail, attachmentExtension)
 		if err != nil {
-			fmt.Sprintf("Well, that failed: ", err.Error())
+			fmt.Sprintf("Echec de l'envoi de l'e-mail: ", err.Error())
 		}
 	}
 }
@@ -235,7 +235,6 @@ func ogc_rapport(imprimante string, rapports []Rapport, attachmentExtension stri
 	out, _ := cmd.Output()
 
 	if imprimante != "0" { //Les rapports ont été sortis sur imprimante.
-		//fmt.Println(out)
 		return
 	}
 	s := strings.Split(string(out), separation)
@@ -247,7 +246,7 @@ func ogc_rapport(imprimante string, rapports []Rapport, attachmentExtension stri
 	for i, rapport := range s {
 		err := sendEMail(rapports[i].Titre, rapport, rapports[i].EMail, attachmentExtension)
 		if err != nil {
-			fmt.Sprintf("Well, that failed: ", err.Error())
+			fmt.Sprintf("Echec de l'envoi de l'e-mail: ", err.Error())
 		}
 
 		/*
@@ -374,12 +373,11 @@ func ogc_transfert() {
 		ogc_rapport("1005", []Rapport{circulaire}, "")
 
 	case 4: //Jeudi
-		fmt.Println("Jeudi")
+		//fmt.Println("Jeudi")
 	case 5: //Vendredi
-		fmt.Println("Vendredi")
+		//fmt.Println("Vendredi")
 	case 6: //Samedi
-		fmt.Println("Samedi")
-
+		//fmt.Println("Samedi")
 	}
 }
 
@@ -447,7 +445,6 @@ func ventes_IBM_fetch() string {
 
 		rTotal, errTotal := regexp.Compile("Total\\s([0-9]*)\\s#\\s\\$([0-9.]*)")
 		if errTotal == nil {
-			//Total 1941 # $54501.79
 			total_slice := rTotal.FindAllStringSubmatch(cleanedSlice[len(cleanedSlice)-2], -1)
 			rapport += fmt.Sprintf("\nTotal d'items: %s\tTotal ventes: %s$\n", total_slice[0][1], total_slice[0][2])
 		}
