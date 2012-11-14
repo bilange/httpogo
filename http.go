@@ -1,7 +1,8 @@
 package main
 
 import (
-	//"fmt"
+	"flag"
+	"fmt"
 	"mime"
 	"net/http"
 	"net/http/cgi"
@@ -27,7 +28,8 @@ import (
 func requestHandler(w http.ResponseWriter, r *http.Request) {
 	phpRegexp, _ := regexp.Compile(".*\\.php")
 
-	pwd, _ := os.Getwd()
+	//pwd, _ := os.Getwd()
+	pwd := wwwRoot
 
 	hostSplit := strings.Split(r.Host, ":")
 	host := hostSplit[0]
@@ -48,7 +50,7 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//Pour les fichiers non-existants 404.
-	fexists, _ := rona.FileExists(fileAbsolute) 
+	fexists, _ := rona.FileExists(fileAbsolute)
 	if fexists == false {
 		fileNotFoundHandler(w, r)
 		return
@@ -90,9 +92,31 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+var port int = 80;
+var wwwRoot string = "/var/www";
+
 func main() {
+	//TODO: PARAMETERS
+	// -home /var/www, overrides file's location
+	// -port 80
+	//TODO
+	// garder pwd dans une variable globale (selon -home ci-haut)
+
+	absoluteWd, _ := os.Getwd()
+
+	parsedPort := flag.Int("port", 80, "Port TCP sur lequel le serveur va ecouter")
+	parsedWWWRoot := flag.String("root", absoluteWd, "Chemin de base vers lequel le serveur web va fournir les fichiers")
+
+	flag.Parse()
+
+	port = *parsedPort
+	wwwRoot = *parsedWWWRoot
+
 	http.HandleFunc("/", requestHandler)
-	http.ListenAndServe(":8888", nil)
+	err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
+	if err != nil {
+		println("Erreur de demarrage du serveur web: ", err.Error())
+	}
 	return
 }
 
@@ -110,7 +134,7 @@ func phpHandler(w http.ResponseWriter, req *http.Request) {
 	if vHostDirExists == true {
 		pwd = vHostFolder
 	} else {
-		pwd = path.Join(pwd, "10.6.41.10")	//Default host/folder. TODO variable?
+		pwd = path.Join(pwd, "10.6.41.10") //Default host/folder. TODO variable?
 	}
 
 	cgiHandler := cgi.Handler{
