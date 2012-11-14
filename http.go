@@ -92,17 +92,18 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-var port int = 80;
-var wwwRoot string = "/var/www";
+var port int = 80
+var wwwRoot string = "/var/www"
 
+//Lance le serveur web.
+//commandline parameters: 
+// -port == TCP port sur lequel le serveur ecoutera.
+// -root == dossier racine qui sera servi aux clients HTTP. ATTENTION, le dossier racine doit contenir
+//          un dossier au nom du domaine demandé par l'usager. Par exemple, si on veut que le serveur réponde
+//          sous www.ronasherbrooke.com, on doit créer un sous-dossier "www.ronasherbrooke.com" sous le dossier
+//          root.
 func main() {
-	//TODO: PARAMETERS
-	// -home /var/www, overrides file's location
-	// -port 80
-	//TODO
-	// garder pwd dans une variable globale (selon -home ci-haut)
-
-	absoluteWd, _ := os.Getwd()
+	absoluteWd, _ := os.Getwd() //par defaut, le dossier contenant l'executable servira de wwwRoot.
 
 	parsedPort := flag.Int("port", 80, "Port TCP sur lequel le serveur va ecouter")
 	parsedWWWRoot := flag.String("root", absoluteWd, "Chemin de base vers lequel le serveur web va fournir les fichiers")
@@ -124,7 +125,8 @@ func main() {
 //Attention, php-cgi est necessaire pour ce setup dans le meme dossier que le
 //serveur http.
 func phpHandler(w http.ResponseWriter, req *http.Request) {
-	pwd, _ := os.Getwd()
+	//pwd, _ := os.Getwd()
+	pwd := wwwRoot
 
 	hostSplit := strings.Split(req.Host, ":")
 	host := hostSplit[0]
@@ -156,7 +158,8 @@ func phpHandler(w http.ResponseWriter, req *http.Request) {
 //L'usager et l'executable est entierement responsable du contenu, on ne fait 
 //que le facteur.
 func executableHandler(w http.ResponseWriter, req *http.Request) {
-	pwd, _ := os.Getwd()
+	//pwd, _ := os.Getwd()
+	pwd := wwwRoot
 
 	hostSplit := strings.Split(req.Host, ":")
 	host := hostSplit[0]
