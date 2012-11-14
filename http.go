@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	//"fmt"
 	"mime"
 	"net/http"
 	"net/http/cgi"
@@ -48,23 +48,16 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//Pour les fichiers non-existants 404.
-	fexists, _ := rona.FileExists(fileAbsolute)
+	fexists, _ := rona.FileExists(fileAbsolute) 
 	if fexists == false {
-		//TODO: Custom 404 Page. V. server.go:709
-		println("Not found: ", fileAbsolute)
 		fileNotFoundHandler(w, r)
-		//http.NotFound(w, r)
 		return
 	}
 
 	phpActuallyBinary := (r.URL.Path == "/backend.php" || r.URL.Path == "/cron.php") //hard-coded exceptions
-	if phpRegexp.MatchString(r.URL.Path) == true && (!phpActuallyBinary) { //Fichier PHP. Ceci requiert php-cgi.
+	if phpRegexp.MatchString(r.URL.Path) == true && (!phpActuallyBinary) {           //Fichier PHP. Ceci requiert php-cgi.
 		phpHandler(w, r)
 		return
-	}
-
-	if phpActuallyBinary {
-		fmt.Printf("Host: %#v\n", fileAbsolute)
 	}
 
 	fdir, _ := rona.FileIsDir(fileAbsolute) //Le URL demande est en fait un dossier
@@ -98,15 +91,14 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	//http.HandleFunc("10.6.41.10:8888/", requestHandler)
-	//ORIGINAL:
 	http.HandleFunc("/", requestHandler)
 	http.ListenAndServe(":8888", nil)
 	return
 }
 
-//phpHandler se charges des scripts PHP, pour backward-compatibility.
-//Attention, php-cgi est necessaire pour ce setup.
+//phpHandler se charge des scripts PHP, pour backward-compatibility.
+//Attention, php-cgi est necessaire pour ce setup dans le meme dossier que le
+//serveur http.
 func phpHandler(w http.ResponseWriter, req *http.Request) {
 	pwd, _ := os.Getwd()
 
@@ -118,7 +110,7 @@ func phpHandler(w http.ResponseWriter, req *http.Request) {
 	if vHostDirExists == true {
 		pwd = vHostFolder
 	} else {
-		pwd = path.Join(pwd, "10.6.41.10")
+		pwd = path.Join(pwd, "10.6.41.10")	//Default host/folder. TODO variable?
 	}
 
 	cgiHandler := cgi.Handler{
@@ -152,7 +144,6 @@ func executableHandler(w http.ResponseWriter, req *http.Request) {
 	} else {
 		pwd = path.Join(pwd, "10.6.41.10")
 	}
-	//println("Path: ", path.Join(pwd, req.URL.Path))
 	cgiHandler := cgi.Handler{
 		Path: path.Join(pwd, req.URL.Path),
 		Dir:  pwd,
