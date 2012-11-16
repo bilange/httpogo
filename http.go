@@ -59,7 +59,6 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	if vHostDirExists == true {
 		pwd = vHostFolder
 	} else {
-		//pwd = path.Join(pwd, "10.6.41.10") //Fallback Default. TODO changer. Flag??
 		pwd = path.Join(pwd, defaultVHost) //Fallback Default. 
 	}
 
@@ -242,7 +241,7 @@ func phpHandler(w http.ResponseWriter, req *http.Request, script string) {
 	if vHostDirExists == true {
 		pwd = vHostFolder
 	} else {
-		pwd = path.Join(pwd, "10.6.41.10") //Default host/folder. TODO variable?
+		pwd = path.Join(pwd, defaultVHost)
 	}
 
 	cgiHandler := cgi.Handler{
@@ -277,7 +276,7 @@ func executableHandler(w http.ResponseWriter, req *http.Request) {
 	if vHostDirExists == true {
 		pwd = vHostFolder
 	} else {
-		pwd = path.Join(pwd, "10.6.41.10")
+		pwd = path.Join(pwd, defaultVHost)
 	}
 	cgiHandler := cgi.Handler{
 		Path: path.Join(pwd, req.URL.Path),
