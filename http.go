@@ -14,6 +14,7 @@ usager UNIX non-root.
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"github.com/russross/blackfriday" //markdown
@@ -41,11 +42,15 @@ import (
 //requete ou le fichier serait suppose d'exister en passant dans un symlink
 //fonctionne correctement.
 func requestHandler(w http.ResponseWriter, r *http.Request) {
+	// TODO: Implanter HTTP Basic Auth dans lequel on regarde si le fichier .auth
+	// existe. Aussi implanter .auth: "user:password"
+
+	// TODO: Garder dans un array global une liste de fichiers 'dangereux', tel
+	// .auth .
+
 	phpRegexp, _ := regexp.Compile(".*\\.php")
 
-	//pwd, _ := os.Getwd()
-	pwd := wwwRoot
-
+	pwd := workingDirectory
 	hostSplit := strings.Split(r.Host, ":")
 	host := hostSplit[0]
 
@@ -54,7 +59,8 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	if vHostDirExists == true {
 		pwd = vHostFolder
 	} else {
-		pwd = path.Join(pwd, "10.6.41.10")
+		//pwd = path.Join(pwd, "10.6.41.10") //Fallback Default. TODO changer. Flag??
+		pwd = path.Join(pwd, defaultVHost) //Fallback Default. 
 	}
 
 	fileAbsolute := filepath.Join(pwd, r.URL.Path)
@@ -73,7 +79,7 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 
 	phpActuallyBinary := (r.URL.Path == "/backend.php" || r.URL.Path == "/cron.php") //hard-coded exceptions
 	if phpRegexp.MatchString(r.URL.Path) == true && (!phpActuallyBinary) {           //Fichier PHP. Ceci requiert php-cgi.
-		phpHandler(w, r)
+		phpHandler(w, r, r.URL.Path)
 		return
 	}
 
@@ -86,6 +92,9 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	fexecutable, _ := rona.FileIsExecutable(fileAbsolute)
 
 	switch {
+	case strings.HasSuffix(r.URL.Path, ".auth"): //on refuse .auth pour raisons de securite.
+		fileNotFoundHandler(w, r) //SECURE: URL.Path n'a que le fichier, sans
+		return                    // ?param ou #anchor dans l'url.
 	case strings.HasSuffix(r.URL.Path, ".md"):
 		markdownHandler(w, r, fileAbsolute, false)
 		return
@@ -106,7 +115,18 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(vHostFolder, r.URL.Path))
 	default:
 		if fdir == true {
-			http.ServeFile(w, r, filepath.Join(vHostFolder, r.URL.Path))
+			// Si par contre index.html / index.php existe dans le dossier, servir ce fichier
+			// plutot.
+			if ok, _ := rona.FileExists(filepath.Join(fileAbsolute, "index.html")); ok {
+				http.ServeFile(w, r, filepath.Join(fileAbsolute, "index.html"))
+				return
+			}
+			if ok, _ := rona.FileExists(filepath.Join(fileAbsolute, "index.php")); ok {
+				phpHandler(w, r, filepath.Join(fileAbsolute, "index.php"))
+				return
+			}
+			// Repertoire ouvert sans index a presenter. On affiche les fichiers ("open directory")
+			directoryHandler(w, r, fileAbsolute)
 			return
 		} else {
 			http.ServeFile(w, r, filepath.Join(vHostFolder, r.URL.Path))
@@ -115,7 +135,8 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 var port int = 80
-var wwwRoot string = "/var/www"
+var workingDirectory string = "/var/www"
+var defaultVHost string = "public_html"
 
 //Lance le serveur web.
 //commandline parameters: 
@@ -125,15 +146,17 @@ var wwwRoot string = "/var/www"
 //          sous www.ronasherbrooke.com, on doit créer un sous-dossier "www.ronasherbrooke.com" sous le dossier
 //          root.
 func main() {
-	absoluteWd, _ := os.Getwd() //par defaut, le dossier contenant l'executable servira de wwwRoot.
+	absoluteWd, _ := os.Getwd() //par defaut, le dossier contenant l'executable servira de workingDirectory.
 
 	parsedPort := flag.Int("port", 80, "Port TCP sur lequel le serveur va ecouter")
-	parsedWWWRoot := flag.String("root", absoluteWd, "Chemin de base vers lequel le serveur web va fournir les fichiers")
+	parsedWorkingDirectory := flag.String("root", absoluteWd, "Dossier de travail du serveur web (bins, scripts, et v-host folders)")
+	parsedDefaultVHost := flag.String("webdir", "public_html", "V-Host par default, si aucune requete match avec un sous-dossier de --root ")
 
 	flag.Parse()
 
 	port = *parsedPort
-	wwwRoot = *parsedWWWRoot
+	workingDirectory = *parsedWorkingDirectory
+	defaultVHost = *parsedDefaultVHost
 
 	http.HandleFunc("/", requestHandler)
 	err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
@@ -143,9 +166,46 @@ func main() {
 	return
 }
 
+func directoryHandler(w http.ResponseWriter, req *http.Request, directory string) {
+	w.Header().Add("Content-type", "text/html")
+
+	var response bytes.Buffer
+
+	template, err := ioutil.ReadFile(filepath.Join(workingDirectory, "dirlist-template.html"))
+	if err != nil {
+		template = []byte(`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>.dir {font-weight: bold;}</style></head> <body><h1>Index of <!--DIRNAME--></h1><hr /><!--BODY--> </body></html> `)
+	}
+	files, err := ioutil.ReadDir(directory)
+	if err != nil {
+		response.WriteString(fmt.Sprintf("Erreur d'ouverture du dossier %s: %s\n", directory, err.Error()))
+		return
+	}
+
+	// On affiche d'abord les dossiers, ensuite les fichiers.
+	for _, v := range files {
+		if v.IsDir() {
+			response.WriteString(fmt.Sprintf("<a class=\"dir\" href=\"%s\">%s</a><br />\n", req.URL.Path+v.Name()+"/", v.Name()+"/"))
+		}
+	}
+	response.WriteString("<br />")
+	for _, v := range files {
+		if v.Name() == ".auth" {
+			continue
+		}
+		if !v.IsDir() {
+			response.WriteString(fmt.Sprintf("<a class=\"file\" href=\"%s\">%s</a><br />\n", req.URL.Path+v.Name(), v.Name()))
+		}
+	}
+
+	// On s'occupe du template et on affiche le tout au client.
+	s := strings.Replace(string(template), "<!--BODY-->", response.String(), 1)
+	s = strings.Replace(s, "<!--DIRNAME-->", req.URL.Path, 1)
+	w.Write([]byte(s))
+}
+
 func markdownHandler(w http.ResponseWriter, req *http.Request, file string, printSource bool) {
 	if printSource == false { // Markdown -> HTML
-		template, err := ioutil.ReadFile(filepath.Join(wwwRoot, "markdown-template.html"))
+		template, err := ioutil.ReadFile(filepath.Join(workingDirectory, "markdown-template.html"))
 		if err != nil {
 			template = []byte(`<!DOCTYPE html><html><head><meta charset="UTF-8"> </head> <body><!--BODY--> </body></html> `)
 		}
@@ -153,10 +213,6 @@ func markdownHandler(w http.ResponseWriter, req *http.Request, file string, prin
 		md, err := ioutil.ReadFile(file)
 		if err == nil {
 			output := blackfriday.MarkdownCommon(md)
-			//w.Write([]byte(header))
-			//w.Write(output)
-			//w.Write([]byte(footer))
-
 			w.Write([]byte(strings.Replace(string(template), "<!--BODY-->", string(output), -1)))
 		}
 	} else {
@@ -174,9 +230,9 @@ func markdownHandler(w http.ResponseWriter, req *http.Request, file string, prin
 //phpHandler se charge des scripts PHP, pour backward-compatibility.
 //Attention, php-cgi est necessaire pour ce setup dans le meme dossier que le
 //serveur http.
-func phpHandler(w http.ResponseWriter, req *http.Request) {
+func phpHandler(w http.ResponseWriter, req *http.Request, script string) {
 	//pwd, _ := os.Getwd()
-	pwd := wwwRoot
+	pwd := workingDirectory
 
 	hostSplit := strings.Split(req.Host, ":")
 	host := hostSplit[0]
@@ -196,8 +252,10 @@ func phpHandler(w http.ResponseWriter, req *http.Request) {
 		Args: []string{req.URL.Path},
 		Env: []string{
 			"REDIRECT_STATUS=200",
-			"SCRIPT_FILENAME=" + path.Join(pwd, req.URL.Path),
-			"SCRIPT_NAME=" + path.Join(pwd, req.URL.Path),
+			//"SCRIPT_FILENAME=" + path.Join(pwd, req.URL.Path),
+			//"SCRIPT_NAME=" + path.Join(pwd, req.URL.Path),
+			"SCRIPT_FILENAME=" + path.Join(pwd, script),
+			"SCRIPT_NAME=" + path.Join(pwd, script),
 		},
 	}
 	cgiHandler.ServeHTTP(w, req)
@@ -209,7 +267,7 @@ func phpHandler(w http.ResponseWriter, req *http.Request) {
 //que le facteur.
 func executableHandler(w http.ResponseWriter, req *http.Request) {
 	//pwd, _ := os.Getwd()
-	pwd := wwwRoot
+	pwd := workingDirectory
 
 	hostSplit := strings.Split(req.Host, ":")
 	host := hostSplit[0]
@@ -242,8 +300,8 @@ func fileNotFoundHandler(w http.ResponseWriter, r *http.Request) {
 	</body>
 </html>
 	`
-	w.WriteHeader(http.StatusNotFound)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
 	w.Write([]byte(html))
 	return
 }
