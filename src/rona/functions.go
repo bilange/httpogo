@@ -1,6 +1,8 @@
 package rona
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
 	"github.com/ziutek/mymysql/mysql"
 	_ "github.com/ziutek/mymysql/native"
@@ -168,4 +170,21 @@ func FileExists(path string) (bool, error) {
 
 func Timestamp() string {
 	return time.Now().Format(time.ANSIC)
+}
+
+//Encode un string en tant que base64.
+func ToBase64(data string) string {
+	var buf bytes.Buffer
+	encoder := base64.NewEncoder(base64.StdEncoding, &buf)
+	encoder.Write([]byte(data))
+	encoder.Close()
+	return buf.String()
+}
+
+//Decode un string base64.
+func FromBase64(data string) string {
+	buf := make([]byte, len(data)*2)
+	r := base64.NewDecoder(base64.StdEncoding, strings.NewReader(data))
+	b, _ := r.Read(buf)
+	return string(buf[:b])
 }

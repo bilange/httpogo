@@ -76,6 +76,39 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	authFile := needsAuth(vHostFolder, r.URL.Path)
+	if authFile != "" {
+		//L'usager doit se loguer pour voir le contenu de ce dossier. Une boite user/password sera affiche a l'ecran.
+		//l'usager restera logue jusqu'a temps que l'usager ferme le browser ou consulte un autre dossier requierant un 
+		//autre login/password pour le meme domaine.
+		//Voir : http://en.wikipedia.org/wiki/Basic_access_authentication
+		//
+		// Le fichier .auth contient, un par ligne : 
+		//     USERNAME:PASSWORD
+		// (Attention le password est gardé en texte clair!!!!!)
+		userAuth := r.Header["Authorization"]
+		if userAuth == nil { //L'usager n'a pas inscrit de user/pass pour un dossier en requierant un.
+			requireHttpAuth(w, fmt.Sprintf("Basic realm=\"%s\"", strings.Replace(filepath.Dir(authFile), vHostFolder, "", -1)))
+			return
+		} else {
+			userAuthParts := strings.Split(userAuth[0], " ")
+			if len(userAuthParts) == 2 {
+				userAuthEncoded := userAuthParts[1]
+				userAuthDecoded := rona.FromBase64(userAuthEncoded)
+				if !fileContainsLine(authFile, userAuthDecoded) { //Le fichier ne contient pas de user/password specifie par l'usager.
+					requireHttpAuth(w, fmt.Sprintf("Basic realm=\"%s\"", strings.Replace(filepath.Dir(authFile), vHostFolder, "", -1)))
+					return
+					//w.Header().Add("WWW-Authenticate", fmt.Sprintf("Basic realm=\"%s\"", strings.Replace(filepath.Dir(authFile), vHostFolder, "", -1)))
+					//w.WriteHeader(http.StatusUnauthorized)
+				}
+				// L'usager est authentifie, on peut laisser passer a partir de ce point.
+			} else { //Mauvaise requete HTTP pour l'auth
+				requireHttpAuth(w, fmt.Sprintf("Basic realm=\"%s\"", strings.Replace(filepath.Dir(authFile), vHostFolder, "", -1)))
+				return
+			}
+		}
+	}
+
 	phpActuallyBinary := (r.URL.Path == "/backend.php" || r.URL.Path == "/cron.php") //hard-coded exceptions
 	if phpRegexp.MatchString(r.URL.Path) == true && (!phpActuallyBinary) {           //Fichier PHP. Ceci requiert php-cgi.
 		phpHandler(w, r, r.URL.Path)
@@ -163,6 +196,27 @@ func main() {
 		fmt.Printf("Erreur: %s\n", err.Error())
 	}
 	return
+}
+
+func needsAuth(vHostFolder string, path string) string {
+
+	directories := ""
+	dirs := strings.Split(path, "/")
+	//fmt.Printf("len: %d %#v\n", len(dirs), dirs)
+	for _, v := range dirs {
+		if v == "" {
+			continue
+		}
+		directories = filepath.Join(directories, v)
+		if dirOk, _ := rona.FileExists(filepath.Join(vHostFolder, directories)); dirOk {
+			if fileOk, _ := rona.FileExists(filepath.Join(vHostFolder, directories, ".auth")); fileOk {
+				return filepath.Join(vHostFolder, directories, ".auth")
+			}
+			//println("Walking ", filepath.Join(vHostFolder, directories))
+		}
+	}
+
+	return ""
 }
 
 func directoryHandler(w http.ResponseWriter, req *http.Request, directory string) {
@@ -303,4 +357,29 @@ func fileNotFoundHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 	w.Write([]byte(html))
 	return
+}
+
+func requireHttpAuth(w http.ResponseWriter, realm string) {
+	w.Header().Add("WWW-Authenticate", realm)
+	w.WriteHeader(http.StatusUnauthorized)
+}
+
+func fileContainsLine(file string, text string) bool {
+	fileContent, err := ioutil.ReadFile(file)
+	if err != nil {
+		return false //error reading file.
+	}
+	fileContentsString := string(fileContent)
+	fileLines := strings.Split(fileContentsString, "\n")
+	for _, v := range fileLines {
+		if v == "" {
+			continue
+		}
+		//fmt.Printf("%#v versus %#v\n", v, text)
+		if v == text {
+			return true
+		}
+	}
+
+	return false
 }
