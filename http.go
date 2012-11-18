@@ -1,4 +1,4 @@
-/*  
+/*  changement inutile
 
 ATTENTION: a *chaque* fois qu'on compile le programme et qu'on ecrase le
 fichier executable d'origine où le serveur sera exécuté, on DOIT ABSOLUMENT
@@ -42,9 +42,6 @@ import (
 //requete ou le fichier serait suppose d'exister en passant dans un symlink
 //fonctionne correctement.
 func requestHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implanter HTTP Basic Auth dans lequel on regarde si le fichier .auth
-	// existe. Aussi implanter .auth: "user:password"
-
 	// TODO: Garder dans un array global une liste de fichiers 'dangereux', tel
 	// .auth .
 
@@ -67,6 +64,10 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/favicon.ico" { //Logging flood, on skip.
 		http.NotFound(w, r)
 		return
+	}
+
+	if logRequest == true {
+		fmt.Printf("%s:%s -> %s \n", host, r.URL.Path, fileAbsolute)
 	}
 
 	//Pour les fichiers non-existants 404.
@@ -169,6 +170,7 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 var port int = 80
 var workingDirectory string = "/var/www"
 var defaultVHost string = "public_html"
+var logRequest bool = false
 
 //Lance le serveur web.
 //commandline parameters: 
@@ -177,18 +179,22 @@ var defaultVHost string = "public_html"
 //          un dossier au nom du domaine demandé par l'usager. Par exemple, si on veut que le serveur réponde
 //          sous www.ronasherbrooke.com, on doit créer un sous-dossier "www.ronasherbrooke.com" sous le dossier
 //          root.
+// -webdir == Sous-dossier qui servira de dossier HTML public par defaut, dans le cas ou aucun sous-dossier 
+//			  match en tant que virtual-host.
 func main() {
 	absoluteWd, _ := os.Getwd() //par defaut, le dossier contenant l'executable servira de workingDirectory.
 
 	parsedPort := flag.Int("port", 80, "Port TCP sur lequel le serveur va ecouter")
 	parsedWorkingDirectory := flag.String("root", absoluteWd, "Dossier de travail du serveur web (bins, scripts, et v-host folders)")
 	parsedDefaultVHost := flag.String("webdir", "public_html", "V-Host par default, si aucune requete match avec un sous-dossier de --root ")
+	parsedLog := flag.Bool("log", false, "Doit-on loguer les requetes a l'ecran?")
 
 	flag.Parse()
 
 	port = *parsedPort
 	workingDirectory = *parsedWorkingDirectory
 	defaultVHost = *parsedDefaultVHost
+	logRequest = *parsedLog
 
 	http.HandleFunc("/", requestHandler)
 	err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
@@ -203,16 +209,13 @@ func needsAuth(vHostFolder string, path string) string {
 	directories := ""
 	dirs := strings.Split(path, "/")
 	//fmt.Printf("len: %d %#v\n", len(dirs), dirs)
-	for _, v := range dirs {
-		if v == "" {
-			continue
-		}
+	for _, v := range dirs { //v == "" ? => root vHostFolder (ne pas skipper)
 		directories = filepath.Join(directories, v)
+		//println("Walking ", filepath.Join(vHostFolder, directories))
 		if dirOk, _ := rona.FileExists(filepath.Join(vHostFolder, directories)); dirOk {
 			if fileOk, _ := rona.FileExists(filepath.Join(vHostFolder, directories, ".auth")); fileOk {
 				return filepath.Join(vHostFolder, directories, ".auth")
 			}
-			//println("Walking ", filepath.Join(vHostFolder, directories))
 		}
 	}
 
