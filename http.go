@@ -1,4 +1,4 @@
-/*  
+/*  ajout bidon
 
 ATTENTION: a *chaque* fois qu'on compile le programme et qu'on ecrase le
 fichier executable d'origine où le serveur sera exécuté, on DOIT ABSOLUMENT
