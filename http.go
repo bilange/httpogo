@@ -1,4 +1,4 @@
-/*  changement inutile
+/*  
 
 ATTENTION: a *chaque* fois qu'on compile le programme et qu'on ecrase le
 fichier executable d'origine où le serveur sera exécuté, on DOIT ABSOLUMENT
@@ -15,6 +15,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"github.com/russross/blackfriday" //markdown
@@ -25,10 +26,28 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
-	"rona"
+	//"regexp"
+	//"rona"
 	"strings"
+	"time"
 )
+
+const (
+	LOG_DEBUG   = 1
+	LOG_INFO    = 2
+	LOG_WARNING = 4
+	LOG_ERROR   = 8
+)
+
+var port int = 80                        // Default TCP Port
+var workingDirectory string = "/var/www" // Dir. where files and v-host dirs are stored
+var defaultVHost string = "public_html"  // Default virtual host if no host matches
+var loggingEnabled bool = false          // Activate logging?
+var loggingLevel int = LOG_INFO          // Minimal logging
+var hiddenFiles []string = []string{     // Files we NEVER want shown
+	".auth",
+	".bin",
+}
 
 //requestHandler se charge de la connection, cherche si un v-host en tant que
 //repertoire existe, et s'occupe de dispatcher le fichier demande a l'usager.
@@ -45,34 +64,38 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	// TODO: Garder dans un array global une liste de fichiers 'dangereux', tel
 	// .auth .
 
-	phpRegexp, _ := regexp.Compile(".*\\.php")
+	//phpRegexp, _ := regexp.Compile(".*\\.php")
 
 	pwd := workingDirectory
 	hostSplit := strings.Split(r.Host, ":")
 	host := hostSplit[0]
 
 	vHostFolder := path.Join(pwd, host)
-	vHostDirExists, _ := rona.FileIsDir(vHostFolder)
+	vHostDirExists, _ := fileIsDir(vHostFolder)
 	if vHostDirExists == true {
 		pwd = vHostFolder
 	} else {
 		pwd = path.Join(pwd, defaultVHost) //Fallback Default. 
+		vHostFolder = pwd
 	}
+
+	errorLog(LOG_DEBUG, fmt.Sprintf("vHost Folder: %s", vHostFolder))
 
 	fileAbsolute := filepath.Join(pwd, r.URL.Path)
 
-	if r.URL.Path == "/favicon.ico" { //Logging flood, on skip.
-		http.NotFound(w, r)
+	errorLog(LOG_INFO, fmt.Sprintf("%s:%s -> %s ", host, r.URL.Path, fileAbsolute))
+
+	if fileIsDiscarded(r.URL.Path) {
+		errorLog(LOG_WARNING, fmt.Sprintf("Filename '%s' is returned to the client as '404 not found' due to being used internally by the server. If this is a legitimate file, change the file name to something else. ", fileAbsolute))
+		acccessLog(vHostFolder, r, 404)
+		fileNotFoundHandler(w, r)
 		return
 	}
 
-	if logRequest == true {
-		fmt.Printf("%s:%s -> %s \n", host, r.URL.Path, fileAbsolute)
-	}
-
 	//Pour les fichiers non-existants 404.
-	fexists, _ := rona.FileExists(fileAbsolute)
+	fexists, _ := fileExists(fileAbsolute)
 	if fexists == false && !strings.HasSuffix(r.URL.Path, ".md.txt") {
+		acccessLog(vHostFolder, r, 404)
 		fileNotFoundHandler(w, r)
 		return
 	}
@@ -90,87 +113,98 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		userAuth := r.Header["Authorization"]
 		if userAuth == nil { //L'usager n'a pas inscrit de user/pass pour un dossier en requierant un.
 			requireHttpAuth(w, fmt.Sprintf("Basic realm=\"%s\"", strings.Replace(filepath.Dir(authFile), vHostFolder, "", -1)))
+			acccessLog(vHostFolder, r, 401)
 			return
 		} else {
 			userAuthParts := strings.Split(userAuth[0], " ")
 			if len(userAuthParts) == 2 {
 				userAuthEncoded := userAuthParts[1]
-				userAuthDecoded := rona.FromBase64(userAuthEncoded)
+				userAuthDecoded := fromBase64(userAuthEncoded)
 				if !fileContainsLine(authFile, userAuthDecoded) { //Le fichier ne contient pas de user/password specifie par l'usager.
 					requireHttpAuth(w, fmt.Sprintf("Basic realm=\"%s\"", strings.Replace(filepath.Dir(authFile), vHostFolder, "", -1)))
+					acccessLog(vHostFolder, r, 401)
 					return
-					//w.Header().Add("WWW-Authenticate", fmt.Sprintf("Basic realm=\"%s\"", strings.Replace(filepath.Dir(authFile), vHostFolder, "", -1)))
-					//w.WriteHeader(http.StatusUnauthorized)
 				}
 				// L'usager est authentifie, on peut laisser passer a partir de ce point.
 			} else { //Mauvaise requete HTTP pour l'auth
 				requireHttpAuth(w, fmt.Sprintf("Basic realm=\"%s\"", strings.Replace(filepath.Dir(authFile), vHostFolder, "", -1)))
+				acccessLog(vHostFolder, r, 401)
 				return
 			}
 		}
 	}
 
+	errorLog(LOG_DEBUG, "No auth found, carrying on.")
+
 	phpActuallyBinary := (r.URL.Path == "/backend.php" || r.URL.Path == "/cron.php") //hard-coded exceptions
-	if phpRegexp.MatchString(r.URL.Path) == true && (!phpActuallyBinary) {           //Fichier PHP. Ceci requiert php-cgi.
+	//if phpRegexp.MatchString(r.URL.Path) == true && (!phpActuallyBinary) {           //Fichier PHP. Ceci requiert php-cgi.
+	if strings.HasSuffix(r.URL.Path, ".php") == true && (!phpActuallyBinary) { //Fichier PHP. Ceci requiert php-cgi.
 		phpHandler(w, r, r.URL.Path)
 		return
 	}
 
-	fdir, _ := rona.FileIsDir(fileAbsolute) //Le URL demande est en fait un dossier
+	fdir, _ := fileIsDir(fileAbsolute) //Le URL demande est en fait un dossier
 	if fdir == true {
 		fileAbsolute += string(os.PathSeparator)
 	}
 
 	mimeType := mime.TypeByExtension(filepath.Ext(fileAbsolute))
-	fexecutable, _ := rona.FileIsExecutable(fileAbsolute)
+	fexecutable, _ := fileIsExecutable(fileAbsolute)
 
 	switch {
-	case strings.HasSuffix(r.URL.Path, ".auth"): //on refuse .auth pour raisons de securite.
-		fileNotFoundHandler(w, r) //SECURE: URL.Path n'a que le fichier, sans
-		return                    // ?param ou #anchor dans l'url.
+	//case strings.HasSuffix(r.URL.Path, ".auth"): //on refuse .auth pour raisons de securite.
+	//fileNotFoundHandler(w, r) //SECURE: URL.Path n'a que le fichier, sans
+	//return                    // ?param ou #anchor dans l'url.
 	case strings.HasSuffix(r.URL.Path, ".md"):
+		acccessLog(vHostFolder, r, 200)
 		markdownHandler(w, r, fileAbsolute, false)
 		return
 	case strings.HasSuffix(r.URL.Path, ".md.txt"):
+		acccessLog(vHostFolder, r, 200)
 		markdownHandler(w, r, fileAbsolute, true)
 		return
 	case mimeType == "application/octet-stream",
 		mimeType == "" && fexecutable == true,
 		strings.HasPrefix(mimeType, "text/x-sh"), phpActuallyBinary:
+		acccessLog(vHostFolder, r, 200)
 		executableHandler(w, r)
 		return
 	case strings.HasPrefix(mimeType, "image"),
 		strings.HasPrefix(mimeType, "text"),
 		strings.HasPrefix(mimeType, "video"), strings.HasPrefix(mimeType, "audio"),
 		strings.HasPrefix(mimeType, "music"),
+		strings.HasSuffix(r.URL.Path, ".js"), strings.HasSuffix(r.URL.Path, ".css"),
 		mimeType == "application/xml", mimeType == "application/javascript":
 
+		errorLog(LOG_DEBUG, fmt.Sprintf("Serving 'known' file format: %s", filepath.Join(vHostFolder, r.URL.Path)))
+		acccessLog(vHostFolder, r, 200)
 		http.ServeFile(w, r, filepath.Join(vHostFolder, r.URL.Path))
+		return
 	default:
 		if fdir == true {
 			// Si par contre index.html / index.php existe dans le dossier, servir ce fichier
 			// plutot.
-			if ok, _ := rona.FileExists(filepath.Join(fileAbsolute, "index.html")); ok {
+			if ok, _ := fileExists(filepath.Join(fileAbsolute, "index.html")); ok {
+				acccessLog(vHostFolder, r, 200)
 				http.ServeFile(w, r, filepath.Join(fileAbsolute, "index.html"))
 				return
 			}
-			if ok, _ := rona.FileExists(filepath.Join(fileAbsolute, "index.php")); ok {
-				phpHandler(w, r, filepath.Join(fileAbsolute, "index.php"))
+			if ok, _ := fileExists(filepath.Join(fileAbsolute, "index.php")); ok {
+				//errorLog(LOG_INFO, fmt.Sprintf("Calling PHP File: %s", filepath.Join(r.URL.Path, "index.php")))
+				acccessLog(vHostFolder, r, 200)
+				phpHandler(w, r, filepath.Join(r.URL.Path, "index.php"))
 				return
 			}
 			// Repertoire ouvert sans index a presenter. On affiche les fichiers ("open directory")
+			acccessLog(vHostFolder, r, 200)
 			directoryHandler(w, r, fileAbsolute)
 			return
 		} else {
+			acccessLog(vHostFolder, r, 200)
 			http.ServeFile(w, r, filepath.Join(vHostFolder, r.URL.Path))
 		}
 	}
 }
-
-var port int = 80
-var workingDirectory string = "/var/www"
-var defaultVHost string = "public_html"
-var logRequest bool = false
 
 //Lance le serveur web.
 //commandline parameters: 
@@ -188,13 +222,24 @@ func main() {
 	parsedWorkingDirectory := flag.String("root", absoluteWd, "Dossier de travail du serveur web (bins, scripts, et v-host folders)")
 	parsedDefaultVHost := flag.String("webdir", "public_html", "V-Host par default, si aucune requete match avec un sous-dossier de --root ")
 	parsedLog := flag.Bool("log", false, "Doit-on loguer les requetes a l'ecran?")
+	parsedLogLevel := flag.String("loglevel", "error", "Quel niveau de verbosite doit-on loguer? DEBUG|INFO|WARNING|ERROR")
 
 	flag.Parse()
 
 	port = *parsedPort
 	workingDirectory = *parsedWorkingDirectory
 	defaultVHost = *parsedDefaultVHost
-	logRequest = *parsedLog
+	loggingEnabled = *parsedLog
+	switch {
+	case *parsedLogLevel == "error":
+		loggingLevel = LOG_ERROR
+	case *parsedLogLevel == "warning":
+		loggingLevel = LOG_WARNING
+	case *parsedLogLevel == "info":
+		loggingLevel = LOG_INFO
+	case *parsedLogLevel == "debug":
+		loggingLevel = LOG_DEBUG
+	}
 
 	http.HandleFunc("/", requestHandler)
 	err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
@@ -212,8 +257,8 @@ func needsAuth(vHostFolder string, path string) string {
 	for _, v := range dirs { //v == "" ? => root vHostFolder (ne pas skipper)
 		directories = filepath.Join(directories, v)
 		//println("Walking ", filepath.Join(vHostFolder, directories))
-		if dirOk, _ := rona.FileExists(filepath.Join(vHostFolder, directories)); dirOk {
-			if fileOk, _ := rona.FileExists(filepath.Join(vHostFolder, directories, ".auth")); fileOk {
+		if dirOk, _ := fileExists(filepath.Join(vHostFolder, directories)); dirOk {
+			if fileOk, _ := fileExists(filepath.Join(vHostFolder, directories, ".auth")); fileOk {
 				return filepath.Join(vHostFolder, directories, ".auth")
 			}
 		}
@@ -294,7 +339,7 @@ func phpHandler(w http.ResponseWriter, req *http.Request, script string) {
 	host := hostSplit[0]
 
 	vHostFolder := path.Join(pwd, host)
-	vHostDirExists, _ := rona.FileIsDir(vHostFolder)
+	vHostDirExists, _ := fileIsDir(vHostFolder)
 	if vHostDirExists == true {
 		pwd = vHostFolder
 	} else {
@@ -314,6 +359,8 @@ func phpHandler(w http.ResponseWriter, req *http.Request, script string) {
 			"SCRIPT_NAME=" + path.Join(pwd, script),
 		},
 	}
+	//errorLog(LOG_DEBUG, fmt.Sprintf("pwd: %s \n scriptname: %s", pwd, script))
+	//errorLog(LOG_DEBUG, fmt.Sprintf("CGI Handler: %#v", cgiHandler))
 	cgiHandler.ServeHTTP(w, req)
 }
 
@@ -329,7 +376,7 @@ func executableHandler(w http.ResponseWriter, req *http.Request) {
 	host := hostSplit[0]
 
 	vHostFolder := path.Join(pwd, host)
-	vHostDirExists, _ := rona.FileIsDir(vHostFolder)
+	vHostDirExists, _ := fileIsDir(vHostFolder)
 	if vHostDirExists == true {
 		pwd = vHostFolder
 	} else {
@@ -385,4 +432,108 @@ func fileContainsLine(file string, text string) bool {
 	}
 
 	return false
+}
+
+func acccessLog(vHost string, r *http.Request, httpCode int) {
+	//fmt.Printf("VHOST: %s\n", filepath.Base(vHost))
+	f, err := os.OpenFile(path.Join(workingDirectory, fmt.Sprintf("%s.log", filepath.Base(vHost))), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0660)
+	if err != nil {
+		fmt.Println("NOT creating ", path.Join(workingDirectory, fmt.Sprintf("%s.log", vHost), err.Error()))
+		return
+	}
+	fmt.Println("Creating ", path.Join(workingDirectory, fmt.Sprintf("%s.log", vHost)))
+
+	defer f.Close()
+
+	ip := r.RemoteAddr[:strings.LastIndex(r.RemoteAddr, ":")]
+	t := time.Now().Format("2/Jan/2006:15:04:05 -0700")
+	query := fmt.Sprintf("%s %s %s", r.Method, r.RequestURI, r.Proto)
+	line := fmt.Sprintf("%s - - [%s] \"%s\" %d - %s\n", ip, t, query, httpCode, r.UserAgent())
+
+	f.WriteString(line)
+}
+
+func errorLog(loglevel int, text string) {
+	if loggingEnabled == true && loggingLevel <= loglevel {
+		t := time.Now().Format("2/Jan/2006:15:04:05 -0700")
+		errorLevel := ""
+		switch loggingLevel {
+		case LOG_DEBUG:
+			errorLevel = "debug"
+		case LOG_INFO:
+			errorLevel = "info"
+		case LOG_ERROR:
+			errorLevel = "error"
+		case LOG_WARNING:
+			errorLevel = "warning"
+		}
+		fmt.Printf("[%s] [%s] [] %s\n", t, errorLevel, text)
+	}
+}
+
+// true if file is an element in the hiddenFiles global variable
+func fileIsDiscarded(file string) bool {
+	f := filepath.Base(file)
+	for _, v := range hiddenFiles {
+		if v == f {
+			return true
+		}
+	}
+	return false
+}
+
+func fileIsDir(path string) (bool, error) {
+	exists, err := fileExists(path)
+	if exists != true || err != nil {
+		return exists, err
+	}
+
+	file, err := os.Stat(path)
+	return file.IsDir(), nil
+}
+
+func fileIsExecutable(path string) (bool, error) {
+	exists, err := fileExists(path)
+	if exists != true || err != nil {
+		return exists, err
+	}
+
+	file, err := os.Stat(path)
+	if file.IsDir() { //Ceci n'est pas un fichier.
+		return false, nil
+	}
+	fileMode := file.Mode()
+	if (fileMode & 0111) != 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
+//De: http://stackoverflow.com/questions/10510691/how-to-check-whether-a-file-or-directory-denoted-by-a-path-exists-in-golang
+func fileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+//Encode un string en tant que base64.
+func toBase64(data string) string {
+	var buf bytes.Buffer
+	encoder := base64.NewEncoder(base64.StdEncoding, &buf)
+	encoder.Write([]byte(data))
+	encoder.Close()
+	return buf.String()
+}
+
+//Decode un string base64.
+func fromBase64(data string) string {
+	buf := make([]byte, len(data)*2)
+	r := base64.NewDecoder(base64.StdEncoding, strings.NewReader(data))
+	b, _ := r.Read(buf)
+	return string(buf[:b])
 }
