@@ -57,6 +57,7 @@ var errLoggingLevel int = LOG_INFO        // Minimal logging
 var hiddenFiles []string = []string{ // Files we NEVER want shown
 	".auth",
 	".bin",
+	".cgi",
 }
 
 //Lance le serveur web.
@@ -230,7 +231,7 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		mimeType == "" && fexecutable == true,
 		strings.HasPrefix(mimeType, "text/x-sh"), phpActuallyBinary:
 		accessLog(vHostFolder, r, 200)
-		executableHandler(w, r)
+		executableHandler(w, r, r.URL.Path)
 		return
 	case strings.HasPrefix(mimeType, "image"),
 		strings.HasPrefix(mimeType, "text"),
@@ -245,8 +246,17 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	default:
 		if fdir == true {
-			// Si par contre index.html / index.php existe dans le dossier, servir ce fichier
-			// plutot.
+			// Si par contre un fichier "index" existe, servir ce fichier plutot.
+			if ok, _ := fileExists(filepath.Join(fileAbsolute, ".cgi")); ok {
+				accessLog(vHostFolder, r, 200)
+				executableHandler(w, r, filepath.Join(r.URL.Path, ".cgi"))
+				return
+			}
+			if ok, _ := fileExists(filepath.Join(fileAbsolute, ".bin")); ok {
+				accessLog(vHostFolder, r, 200)
+				executableHandler(w, r, filepath.Join(r.URL.Path, ".bin"))
+				return
+			}
 			if ok, _ := fileExists(filepath.Join(fileAbsolute, "index.html")); ok {
 				accessLog(vHostFolder, r, 200)
 				http.ServeFile(w, r, filepath.Join(fileAbsolute, "index.html"))
@@ -344,15 +354,17 @@ func phpHandler(w http.ResponseWriter, req *http.Request, script string) {
 	host := hostSplit[0]
 
 	vHostFolder := path.Join(pwd, host)
-	vHostDirExists, _ := fileIsDir(vHostFolder)
-	if vHostDirExists == true {
+	//vHostDirExists, _ := fileIsDir(vHostFolder)
+	//if vHostDirExists == true {
+	if ok, _ := fileIsDir(vHostFolder); ok {
 		pwd = vHostFolder
 	} else {
 		pwd = path.Join(pwd, defaultVHost)
 	}
 
 	cgiHandler := cgi.Handler{
-		Path: path.Join(pwd, "../php-cgi"),
+		//Path: path.Join(pwd, "../php-cgi"),
+		Path: path.Join(workingDirectory, "files/php-cgi"),
 		Dir:  pwd,
 		Root: pwd,
 		Args: []string{req.URL.Path},
@@ -372,7 +384,7 @@ func phpHandler(w http.ResponseWriter, req *http.Request, script string) {
 //compiles, des shell scripts et autres programmes dont on n'a pas le controle.
 //L'usager et l'executable est entierement responsable du contenu, on ne fait 
 //que le facteur.
-func executableHandler(w http.ResponseWriter, req *http.Request) {
+func executableHandler(w http.ResponseWriter, req *http.Request, bin string) {
 	//pwd, _ := os.Getwd()
 	pwd := workingDirectory
 
@@ -387,7 +399,8 @@ func executableHandler(w http.ResponseWriter, req *http.Request) {
 		pwd = path.Join(pwd, defaultVHost)
 	}
 	cgiHandler := cgi.Handler{
-		Path: path.Join(pwd, req.URL.Path),
+		//Path: path.Join(pwd, req.URL.Path),
+		Path: path.Join(pwd, bin),
 		Dir:  pwd,
 		Root: pwd,
 		//Args: []string{file},
