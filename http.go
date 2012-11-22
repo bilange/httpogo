@@ -11,6 +11,9 @@ usager UNIX non-root.
 
 */
 
+// TODO: Support pour .bin et/ou .cgi dans le dossier comme office de 
+//       index.html??
+
 package main
 
 import (
@@ -142,7 +145,7 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 
 	fileAbsolute := filepath.Join(pwd, r.URL.Path)
 
-	errorLog(LOG_INFO, host, fmt.Sprintf("%s:%s -> %s ", host, r.URL.Path, fileAbsolute))
+	errorLog(LOG_DEBUG, host, fmt.Sprintf("%s:%s -> %s ", host, r.URL.Path, fileAbsolute))
 
 	if fileIsDiscarded(r.URL.Path) {
 		errorLog(LOG_WARNING, host, fmt.Sprintf("Filename '%s' is returned to the client as '404 not found' due to being used internally by the server. If this is a legitimate file, change the file name to something else. ", fileAbsolute))
@@ -193,7 +196,9 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	errorLog(LOG_DEBUG, host, "No auth found, carrying on.")
+	if authFile == "" {
+		errorLog(LOG_DEBUG, host, "No auth found, carrying on.")
+	}
 
 	phpActuallyBinary := (r.URL.Path == "/backend.php" || r.URL.Path == "/cron.php") //hard-coded exceptions
 	if strings.HasSuffix(r.URL.Path, ".php") == true && (!phpActuallyBinary) {       //Fichier PHP. Ceci requiert php-cgi.
@@ -398,7 +403,7 @@ func unauthorizedHandler(w http.ResponseWriter, r *http.Request) {
 		html = []byte(`<html> <body> <span style="font-size: 9pt; color: #333;">401: Pas autoris&eacute; / Unauthorized</span> <h1>T'es qui, to&eacute;? // Who the heck are you?</h1> <p>Vous avez atteint un dossier qui n&eacute;cessite une identification avant d'atteindre le contenu. Vous devez remplir le formulaire qui vous avait &eacute;t&eacute; pr&eacute;sent&eacute; avant de voir le contenu.</p> <p>You have reached a folder or a file that requires authorization. You need to identify yourself before seeing that content.</p> </body> </html> `)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusNotFound)
+	w.WriteHeader(http.StatusUnauthorized)
 	w.Write([]byte(html))
 	return
 }
@@ -421,8 +426,6 @@ func accessLog(vHost string, r *http.Request, httpCode int) {
 	//fmt.Printf("VHOST: %s\n", filepath.Base(vHost))
 	f, err := os.OpenFile(path.Join(workingDirectory, "logs", fmt.Sprintf("%s.log", filepath.Base(vHost))), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0660)
 	if err != nil {
-		//fmt.Println("NOT creating ", path.Join(workingDirectory, fmt.Sprintf("%s.log", vHost), err.Error()))
-		//TODO: ERROR LOG
 		errorLog(LOG_ERROR, vHost, fmt.Sprintf("Error opening ", path.Join(workingDirectory, fmt.Sprintf("%s.log", vHost), err.Error())))
 		return
 	}
@@ -436,7 +439,6 @@ func accessLog(vHost string, r *http.Request, httpCode int) {
 	f.WriteString(line)
 }
 
-// TODO: stdout ou en fichier...
 func errorLog(loglevel int, vHost string, text string) {
 	if loggingEnabled == true && errLoggingLevel <= loglevel {
 		t := time.Now().Format("2/Jan/2006:15:04:05 -0700")
@@ -476,8 +478,8 @@ func errorLog(loglevel int, vHost string, text string) {
 *****************************************************************************/
 func requireHttpAuth(w http.ResponseWriter, r *http.Request, realm string) {
 	w.Header().Add("WWW-Authenticate", realm)
+	//w.WriteHeader(http.StatusUnauthorized)
 	unauthorizedHandler(w, r)
-	w.WriteHeader(http.StatusUnauthorized)
 }
 
 func needsAuth(vHostFolder string, path string) string {
