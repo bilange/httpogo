@@ -196,7 +196,9 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	errorLog(LOG_DEBUG, host, "No auth found, carrying on.")
+	if authFile == "" {
+		errorLog(LOG_DEBUG, host, "No auth found, carrying on.")
+	}
 
 	phpActuallyBinary := (r.URL.Path == "/backend.php" || r.URL.Path == "/cron.php") //hard-coded exceptions
 	if strings.HasSuffix(r.URL.Path, ".php") == true && (!phpActuallyBinary) {       //Fichier PHP. Ceci requiert php-cgi.
@@ -401,7 +403,7 @@ func unauthorizedHandler(w http.ResponseWriter, r *http.Request) {
 		html = []byte(`<html> <body> <span style="font-size: 9pt; color: #333;">401: Pas autoris&eacute; / Unauthorized</span> <h1>T'es qui, to&eacute;? // Who the heck are you?</h1> <p>Vous avez atteint un dossier qui n&eacute;cessite une identification avant d'atteindre le contenu. Vous devez remplir le formulaire qui vous avait &eacute;t&eacute; pr&eacute;sent&eacute; avant de voir le contenu.</p> <p>You have reached a folder or a file that requires authorization. You need to identify yourself before seeing that content.</p> </body> </html> `)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusNotFound)
+	w.WriteHeader(http.StatusUnauthorized)
 	w.Write([]byte(html))
 	return
 }
@@ -476,8 +478,8 @@ func errorLog(loglevel int, vHost string, text string) {
 *****************************************************************************/
 func requireHttpAuth(w http.ResponseWriter, r *http.Request, realm string) {
 	w.Header().Add("WWW-Authenticate", realm)
+	//w.WriteHeader(http.StatusUnauthorized)
 	unauthorizedHandler(w, r)
-	w.WriteHeader(http.StatusUnauthorized)
 }
 
 func needsAuth(vHostFolder string, path string) string {
