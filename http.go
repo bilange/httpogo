@@ -50,6 +50,7 @@ var port int = 80                        // Default TCP Port
 var workingDirectory string = "/var/www" // Dir. where files and v-host dirs are stored
 var defaultVHost string = "public_html"  // Default virtual host if no host matches
 var loggingEnabled bool = false          // Activate logging?
+var runAsRoot bool = false               // Permettre de rouler sous root?
 
 var errLoggingOutput int = ERR_LOG_STDOUT //	Where should we print out errors/debug?
 var errLoggingLevel int = LOG_INFO        // Minimal logging
@@ -76,6 +77,7 @@ func main() {
 	parsedWorkingDirectory := flag.String("root", absoluteWd, "Dossier de travail du serveur web (bins, scripts, et v-host folders)")
 	parsedDefaultVHost := flag.String("webdir", "public_html", "V-Host par default, si aucune requete match avec un sous-dossier de --root ")
 	parsedLog := flag.Bool("log", false, "Doit-on loguer les requetes a l'ecran?")
+	parsedRunAsRoot := flag.Bool("runasroot", false, "Permettre l'execution du serveur sous root? (Dangereux)")
 	parsedLogLevel := flag.String("loglevel", "error", "Quel niveau de verbosite doit-on loguer? DEBUG|INFO|WARNING|ERROR")
 	parsedErrLog := flag.String("errorto", "stdout", "Ou doit-on loguer les erreurs? SILENT|STDOUT|FILE")
 
@@ -85,6 +87,11 @@ func main() {
 	workingDirectory = *parsedWorkingDirectory
 	defaultVHost = *parsedDefaultVHost
 	loggingEnabled = *parsedLog
+
+	if os.Getuid() == 0 && *parsedRunAsRoot == false {
+		println("Refusing to run as root. If this is REALLY what you want, append -runasroot=true to your command line.")
+		os.Exit(1)
+	}
 
 	// MINIMAL ERROR LEVEL LOGGING:
 	switch {
@@ -247,6 +254,14 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		if fdir == true {
 			// Si par contre un fichier "index" existe, servir ce fichier plutot.
+			// TODO: Un repertoire sans trailing slash tombe a referer au parent dans ses liens...
+
+			if r.URL.Path[len(r.URL.Path)-1] != '/' {
+				w.Header().Add("Location", r.URL.Path+"/\n")
+				w.WriteHeader(http.StatusMovedPermanently)
+				return
+			}
+
 			if ok, _ := fileExists(filepath.Join(fileAbsolute, ".cgi")); ok {
 				accessLog(vHostFolder, r, 200)
 				executableHandler(w, r, filepath.Join(r.URL.Path, ".cgi"))
