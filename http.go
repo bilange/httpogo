@@ -141,6 +141,8 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	host := hostSplit[0]
 
 	vHostFolder := path.Join(pwd, host)
+	errorLog(LOG_DEBUG, host, fmt.Sprintf("vHost Folder (before checks): %s", vHostFolder))
+
 	vHostDirExists, _ := fileIsDir(vHostFolder)
 	if vHostDirExists == true {
 		pwd = vHostFolder
@@ -149,7 +151,7 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		vHostFolder = pwd
 	}
 
-	errorLog(LOG_DEBUG, host, fmt.Sprintf("vHost Folder: %s", vHostFolder))
+	errorLog(LOG_DEBUG, host, fmt.Sprintf("vHost Folder (after checks): %s", vHostFolder))
 
 	fileAbsolute := filepath.Join(pwd, r.URL.Path)
 
