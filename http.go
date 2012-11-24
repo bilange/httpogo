@@ -49,7 +49,7 @@ const (
 var port int = 80                        // Default TCP Port
 var workingDirectory string = "/var/www" // Dir. where files and v-host dirs are stored
 var defaultVHost string = "public_html"  // Default virtual host if no host matches
-var loggingEnabled bool = false          // Activate logging?
+var loggingEnabled bool = true           // Activate logging?
 var runAsRoot bool = false               // Permettre de rouler sous root?
 
 var errLoggingOutput int = ERR_LOG_STDOUT //	Where should we print out errors/debug?
@@ -61,25 +61,18 @@ var hiddenFiles []string = []string{ // Files we NEVER want shown
 	".cgi",
 }
 
-//Lance le serveur web.
 //commandline parameters: 
-// -port == TCP port sur lequel le serveur ecoutera.
-// -root == dossier racine qui sera servi aux clients HTTP. ATTENTION, le dossier racine doit contenir
-//          un dossier au nom du domaine demandé par l'usager. Par exemple, si on veut que le serveur réponde
-//          sous www.ronasherbrooke.com, on doit créer un sous-dossier "www.ronasherbrooke.com" sous le dossier
-//          root.
-// -webdir == Sous-dossier qui servira de dossier HTML public par defaut, dans le cas ou aucun sous-dossier 
-//			  match en tant que virtual-host.
+// see use -h for a full parameter listing.
 func main() {
 	absoluteWd, _ := os.Getwd() //par defaut, le dossier contenant l'executable servira de workingDirectory.
 
-	parsedPort := flag.Int("port", 80, "Port TCP sur lequel le serveur va ecouter")
-	parsedWorkingDirectory := flag.String("root", absoluteWd, "Dossier de travail du serveur web (bins, scripts, et v-host folders)")
-	parsedDefaultVHost := flag.String("webdir", "public_html", "V-Host par default, si aucune requete match avec un sous-dossier de --root ")
-	parsedLog := flag.Bool("log", false, "Doit-on loguer les requetes a l'ecran?")
-	parsedRunAsRoot := flag.Bool("runasroot", false, "Permettre l'execution du serveur sous root? (Dangereux)")
-	parsedLogLevel := flag.String("loglevel", "error", "Quel niveau de verbosite doit-on loguer? DEBUG|INFO|WARNING|ERROR")
-	parsedErrLog := flag.String("errorto", "stdout", "Ou doit-on loguer les erreurs? SILENT|STDOUT|FILE")
+	parsedPort := flag.Int("port", 80, "TCP Port the server will listen onto")
+	parsedWorkingDirectory := flag.String("root", absoluteWd, "Root directory (where binaries, scripts, v-host public folders are stored)")
+	parsedDefaultVHost := flag.String("webdir", "public_html", "Default V-Host, in the case where no -root subfolders matches the requested HTTP Host")
+	parsedLog := flag.Bool("log", false, "Enable logging")
+	parsedRunAsRoot := flag.Bool("runasroot", false, "Allows execution of this program under root")
+	parsedLogLevel := flag.String("loglevel", "error", "What minimum logging verbosity should logging use? Choices: DEBUG|INFO|WARNING|ERROR")
+	parsedErrLog := flag.String("errorto", "stdout", "Where should errors be logged? Choices: SILENT|STDOUT|FILE")
 
 	flag.Parse()
 
@@ -123,17 +116,11 @@ func main() {
 	return
 }
 
-//requestHandler se charge de la connection, cherche si un v-host en tant que
-//repertoire existe, et s'occupe de dispatcher le fichier demande a l'usager.
-//Dans le cas d'un fichier PHP ou binaire (ou script shell), la controle est 
-//renvoye au fichier externe en l'executant convenablement (CGI).
-//BUG: En passant dans un dossier qui est un symlink, toutes les requetes de
-//dossiers (qui generent un listing de fichiers) donneront des mauvais URLs.
-//Ex: http:host/folder/, si 'folder' n'a pas d'index.html et que ce dossier
-//est un lien symbolique vers un autre dossier, ceci donnera des urls du genre
-//http:host/filename.ext EN OMETTANT le dossier symlink. Ceci dit, faire une
-//requete ou le fichier serait suppose d'exister en passant dans un symlink
-//fonctionne correctement.
+//requestHandler takes change of the incoming connection, by looking for a
+//matching vhost as a subfolder of -root . After the right vhost is found,
+//(or uses the defaultVHost variable as a last case scenario), the request is
+//then handled differently depending whether this is a static file, a binary,
+//a PHP script, a markdown document, or an open folder with no index files.
 func requestHandler(w http.ResponseWriter, r *http.Request) {
 
 	pwd := workingDirectory
@@ -164,7 +151,8 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//Pour les fichiers non-existants 404.
+	//For not found files (exception: markdown 'source' files that are later
+	//passed with the original unparsed .md file)
 	fexists, _ := fileExists(fileAbsolute)
 	if fexists == false && !strings.HasSuffix(r.URL.Path, ".md.txt") {
 		accessLog(vHostFolder, r, 404)
@@ -173,17 +161,18 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	authFile := needsAuth(vHostFolder, r.URL.Path)
+	authPassed := false
 	if authFile != "" {
-		//L'usager doit se loguer pour voir le contenu de ce dossier. Une boite user/password sera affiche a l'ecran.
-		//l'usager restera logue jusqu'a temps que l'usager ferme le browser ou consulte un autre dossier requierant un 
-		//autre login/password pour le meme domaine.
-		//Voir : http://en.wikipedia.org/wiki/Basic_access_authentication
+		//The user must be logged to see the folder's contents. An user/password box will be shown on-screen.
+		//The user will stay logged on until the user closes the browser window or requests another folder on the same hosts
+		//requiring ANOTHER set of user/password pair.
+		//See : http://en.wikipedia.org/wiki/Basic_access_authentication
 		//
-		// Le fichier .auth contient, un par ligne : 
+		// The '.auth' file contains this on a single line
 		//     USERNAME:PASSWORD
-		// (Attention le password est gardé en texte clair!!!!!)
+		// (Caution: the password is kept in clear-text!!!)
 		userAuth := r.Header["Authorization"]
-		if userAuth == nil { //L'usager n'a pas inscrit de user/pass pour un dossier en requierant un.
+		if userAuth == nil { //User didn't provide a user/password pair for a folder requiring authentication
 			requireHttpAuth(w, r, fmt.Sprintf("Basic realm=\"%s\"", strings.Replace(filepath.Dir(authFile), vHostFolder, "", -1)))
 			accessLog(vHostFolder, r, 401)
 			return
@@ -192,13 +181,16 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 			if len(userAuthParts) == 2 {
 				userAuthEncoded := userAuthParts[1]
 				userAuthDecoded := fromBase64(userAuthEncoded)
-				if !fileContainsLine(authFile, userAuthDecoded) { //Le fichier ne contient pas de user/password specifie par l'usager.
+				if !fileContainsLine(authFile, userAuthDecoded) { // .auth file doesnt contain the user:password pair the user provided
 					requireHttpAuth(w, r, fmt.Sprintf("Basic realm=\"%s\"", strings.Replace(filepath.Dir(authFile), vHostFolder, "", -1)))
 					accessLog(vHostFolder, r, 401)
 					return
+				} else {
+					authPassed = true
+					// User has been authenticated, letting the request fly
+					// through the rest of the function body.
 				}
-				// L'usager est authentifie, on peut laisser passer a partir de ce point.
-			} else { //Mauvaise requete HTTP pour l'auth
+			} else { //Bad auth HTTP request (userAuthParts should contain a base64-encoded user:password value as its 2nd element)
 				requireHttpAuth(w, r, fmt.Sprintf("Basic realm=\"%s\"", strings.Replace(filepath.Dir(authFile), vHostFolder, "", -1)))
 				accessLog(vHostFolder, r, 401)
 				return
@@ -208,15 +200,19 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 
 	if authFile == "" {
 		errorLog(LOG_DEBUG, host, "No auth found, carrying on.")
+	} else {
+		if authPassed == true {
+			errorLog(LOG_DEBUG, host, "User successfully passed authentication.")
+		}
 	}
 
-	phpActuallyBinary := (r.URL.Path == "/backend.php" || r.URL.Path == "/cron.php") //hard-coded exceptions
-	if strings.HasSuffix(r.URL.Path, ".php") == true && (!phpActuallyBinary) {       //Fichier PHP. Ceci requiert php-cgi.
+	phpActuallyBinary := (r.URL.Path == "/backend.php" || r.URL.Path == "/cron.php") //hard-coded exceptions (Intranet)
+	if strings.HasSuffix(r.URL.Path, ".php") == true && (!phpActuallyBinary) {       //PHP file. This requires php-cgi properly compiled and stored in the 'root'/files folder.
 		phpHandler(w, r, r.URL.Path)
 		return
 	}
 
-	fdir, _ := fileIsDir(fileAbsolute) //Le URL demande est en fait un dossier
+	fdir, _ := fileIsDir(fileAbsolute) // Requested URL points to a folder
 	if fdir == true {
 		fileAbsolute += string(os.PathSeparator)
 	}
@@ -225,9 +221,6 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	fexecutable, _ := fileIsExecutable(fileAbsolute)
 
 	switch {
-	//case strings.HasSuffix(r.URL.Path, ".auth"): //on refuse .auth pour raisons de securite.
-	//fileNotFoundHandler(w, r) //SECURE: URL.Path n'a que le fichier, sans
-	//return                    // ?param ou #anchor dans l'url.
 	case strings.HasSuffix(r.URL.Path, ".md"):
 		accessLog(vHostFolder, r, 200)
 		markdownHandler(w, r, fileAbsolute, false)
@@ -255,15 +248,19 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	default:
 		if fdir == true {
-			// Si par contre un fichier "index" existe, servir ce fichier plutot.
-			// TODO: Un repertoire sans trailing slash tombe a referer au parent dans ses liens...
-
+			//HACK: This block deals with requests to folders WITHOUT a
+			//trailing slash, causing issues with in-document HTML links to
+			//images/css/js. For open folders, this caused links to be
+			//pointing at the folder's parent too. We're blindly forwarding
+			//the request to the slashed equivalent and be done with it.
 			if r.URL.Path[len(r.URL.Path)-1] != '/' {
 				w.Header().Add("Location", r.URL.Path+"/\n")
 				w.WriteHeader(http.StatusMovedPermanently)
 				return
 			}
 
+			//For the following blocks, deals with open directories known and
+			//supported scenarios (.cgi, .bin, indexes).
 			if ok, _ := fileExists(filepath.Join(fileAbsolute, ".cgi")); ok {
 				accessLog(vHostFolder, r, 200)
 				executableHandler(w, r, filepath.Join(r.URL.Path, ".cgi"))
@@ -284,7 +281,8 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 				phpHandler(w, r, filepath.Join(r.URL.Path, "index.php"))
 				return
 			}
-			// Repertoire ouvert sans index a presenter. On affiche les fichiers ("open directory")
+			// At this point, this is simply an open directory without any indexes.
+			// Showing it as-is.
 			accessLog(vHostFolder, r, 200)
 			directoryHandler(w, r, fileAbsolute)
 			return
@@ -310,11 +308,11 @@ func directoryHandler(w http.ResponseWriter, req *http.Request, directory string
 	}
 	files, err := ioutil.ReadDir(directory)
 	if err != nil {
-		response.WriteString(fmt.Sprintf("Erreur d'ouverture du dossier %s: %s\n", directory, err.Error()))
+		response.WriteString(fmt.Sprintf("Error opening folder%s: %s\n", directory, err.Error()))
 		return
 	}
 
-	// On affiche d'abord les dossiers, ensuite les fichiers.
+	// Displaying folders first, then the files.
 	for _, v := range files {
 		if v.IsDir() {
 			response.WriteString(fmt.Sprintf("<a class=\"dir\" href=\"%s\">%s</a><br />\n", req.URL.Path+v.Name()+"/", v.Name()+"/"))
@@ -330,7 +328,7 @@ func directoryHandler(w http.ResponseWriter, req *http.Request, directory string
 		}
 	}
 
-	// On s'occupe du template et on affiche le tout au client.
+	// Template handling, then displaying the whole thing to the client.
 	s := strings.Replace(string(template), "<!--BODY-->", response.String(), 1)
 	s = strings.Replace(s, "<!--DIRNAME-->", req.URL.Path, 1)
 	w.Write([]byte(s))
@@ -360,19 +358,16 @@ func markdownHandler(w http.ResponseWriter, req *http.Request, file string, prin
 
 }
 
-//phpHandler se charge des scripts PHP, pour backward-compatibility.
-//Attention, php-cgi est necessaire pour ce setup dans le meme dossier que le
-//serveur http.
+//phpHandler deals with PHP files. Warning, this blindly assumes there's a 
+//php-cgi file under the 'files' directory contained in the -root command
+//argument. TODO.
 func phpHandler(w http.ResponseWriter, req *http.Request, script string) {
-	//pwd, _ := os.Getwd()
 	pwd := workingDirectory
 
 	hostSplit := strings.Split(req.Host, ":")
 	host := hostSplit[0]
 
 	vHostFolder := path.Join(pwd, host)
-	//vHostDirExists, _ := fileIsDir(vHostFolder)
-	//if vHostDirExists == true {
 	if ok, _ := fileIsDir(vHostFolder); ok {
 		pwd = vHostFolder
 	} else {
@@ -380,8 +375,7 @@ func phpHandler(w http.ResponseWriter, req *http.Request, script string) {
 	}
 
 	cgiHandler := cgi.Handler{
-		//Path: path.Join(pwd, "../php-cgi"),
-		Path: path.Join(workingDirectory, "files/php-cgi"),
+		Path: path.Join(workingDirectory, "files/php-cgi"), //TODO: Variable?
 		Dir:  pwd,
 		Root: pwd,
 		Args: []string{req.URL.Path},
@@ -393,16 +387,16 @@ func phpHandler(w http.ResponseWriter, req *http.Request, script string) {
 			"SCRIPT_NAME=" + path.Join(pwd, script),
 		},
 	}
-	//errorLog(LOG_DEBUG, fmt.Sprintf("CGI Handler: %#v", cgiHandler))
+	errorLog(LOG_DEBUG, host, fmt.Sprintf("CGI Handler: %#v", cgiHandler))
 	cgiHandler.ServeHTTP(w, req)
 }
 
-//executableHandler se charge des fichiers executables, tel des programmes go 
-//compiles, des shell scripts et autres programmes dont on n'a pas le controle.
-//L'usager et l'executable est entierement responsable du contenu, on ne fait 
-//que le facteur.
+//executablehandler deals with self-contained executable files, like go
+//compiled files, shell scripts and other programs we don't have the control
+//ultimately. YOU are basically held responsible for the content. We're just
+//doing the mailman at this rate.
+//TODO: Pass HTTP GET parameters
 func executableHandler(w http.ResponseWriter, req *http.Request, bin string) {
-	//pwd, _ := os.Getwd()
 	pwd := workingDirectory
 
 	hostSplit := strings.Split(req.Host, ":")
@@ -498,7 +492,7 @@ func errorLog(loglevel int, vHost string, text string) {
 		case ERR_LOG_STDOUT:
 			fmt.Printf(line)
 		case ERR_LOG_SILENT:
-			//rien??
+			//What did you expect? :-)
 		}
 	}
 }
@@ -506,19 +500,21 @@ func errorLog(loglevel int, vHost string, text string) {
 /*****************************************************************************
 								AUTH
 *****************************************************************************/
+
+//shortcut function :)
 func requireHttpAuth(w http.ResponseWriter, r *http.Request, realm string) {
 	w.Header().Add("WWW-Authenticate", realm)
-	//w.WriteHeader(http.StatusUnauthorized)
 	unauthorizedHandler(w, r)
 }
 
+//Returns the first root-most folder for which the user would need to authenticate to.
+//This server only requires authentication for the 'first' folder protected by .auth, 
+//As it fit most basic needs anyway.
 func needsAuth(vHostFolder string, path string) string {
 	directories := ""
 	dirs := strings.Split(path, "/")
-	//fmt.Printf("len: %d %#v\n", len(dirs), dirs)
 	for _, v := range dirs { //v == "" ? => root vHostFolder (ne pas skipper)
 		directories = filepath.Join(directories, v)
-		//println("Walking ", filepath.Join(vHostFolder, directories))
 		if dirOk, _ := fileExists(filepath.Join(vHostFolder, directories)); dirOk {
 			if fileOk, _ := fileExists(filepath.Join(vHostFolder, directories, ".auth")); fileOk {
 				return filepath.Join(vHostFolder, directories, ".auth")
@@ -581,7 +577,6 @@ func fileContainsLine(file string, text string) bool {
 		if v == "" {
 			continue
 		}
-		//fmt.Printf("%#v versus %#v\n", v, text)
 		if v == text {
 			return true
 		}
@@ -590,7 +585,7 @@ func fileContainsLine(file string, text string) bool {
 	return false
 }
 
-//De: http://stackoverflow.com/questions/10510691/how-to-check-whether-a-file-or-directory-denoted-by-a-path-exists-in-golang
+//From: http://stackoverflow.com/questions/10510691/how-to-check-whether-a-file-or-directory-denoted-by-a-path-exists-in-golang
 func fileExists(path string) (bool, error) {
 	_, err := os.Stat(path)
 	if err == nil {
@@ -602,7 +597,7 @@ func fileExists(path string) (bool, error) {
 	return false, err
 }
 
-//Encode un string en tant que base64.
+//Encodes a string as base64.
 func toBase64(data string) string {
 	var buf bytes.Buffer
 	encoder := base64.NewEncoder(base64.StdEncoding, &buf)
@@ -611,7 +606,7 @@ func toBase64(data string) string {
 	return buf.String()
 }
 
-//Decode un string base64.
+//Decodes a base64 string to a... string.
 func fromBase64(data string) string {
 	buf := make([]byte, len(data)*2)
 	r := base64.NewDecoder(base64.StdEncoding, strings.NewReader(data))
