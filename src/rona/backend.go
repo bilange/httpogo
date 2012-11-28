@@ -9,10 +9,10 @@ package rona
 import (
 	"encoding/xml"
 	"fmt"
-	"os"
-	"strings"
 	"github.com/ziutek/mymysql/mysql"
 	_ "github.com/ziutek/mymysql/native"
+	"os"
+	"strings"
 )
 
 //Sauvegarde un nouveau prix enregistre dans le fichier Excel.
@@ -288,6 +288,7 @@ func Backend_productinfo() {
 		HttpWriteResponse(string(out))
 		FlushHttp(0)
 	}
+
 	codeRona = mainRows[0].Str(mainRes.Map("in1_code"))
 	produit.Titre = ToUpperWords(OGCStringConvert(mainRows[0].Bin(mainRes.Map("in1_desc_f"))))
 	produit.Desc1 = ToUpperWords(OGCStringConvert(mainRows[0].Bin(mainRes.Map("in1_desc_courte"))))
@@ -304,10 +305,14 @@ func Backend_productinfo() {
 	}
 	if len(locRows) > 0 {
 		for _, locRow := range locRows {
-			produit.AddLocalisation(locRow.Str(locRes.Map("loc")), locRow.Str(locRes.Map("type")), locRow.Int(locRes.Map("etiq")))
+			locEtiqNo, convErr := locRow.IntErr(locRes.Map("etiq"))
+			if convErr != nil {
+				locEtiqNo = 0 //Erreur de conversion, probablement un etiquette au format NULL dans la db.
+			}
+			//produit.AddLocalisation(locRow.Str(locRes.Map("loc")), locRow.Str(locRes.Map("type")), locRow.Int(locRes.Map("etiq")))
+			produit.AddLocalisation(locRow.Str(locRes.Map("loc")), locRow.Str(locRes.Map("type")), locEtiqNo)
 		}
 	}
-
 	techRows, _, techError := db.Query("select sidma_technique.desc from sidma_technique where rona='%s';", codeRona)
 	if techError != nil {
 		XMLDie(fmt.Sprint("Erreur dans le SQL sidma_technique: ", techError))
@@ -326,6 +331,7 @@ func Backend_productinfo() {
 			ums = append(ums, umsRow.Str(umsRes.Map("bar_unit_vente")))
 		}
 	}
+
 	upcSQL := ""
 	for _, um := range ums {
 		if prixRegulierSeulement == true {
