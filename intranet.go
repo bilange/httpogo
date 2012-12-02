@@ -68,7 +68,7 @@ func main() {
 		//exécution différente. Ce switch définit quoi faire selon comment on 
 		//appelle ce programme.
 		switch filename {
-		case "backend.php":
+		case "backend.php", "backend":
 			action, exists := rona.GetHTTPArgument("action")
 			if exists == false { //Affichage dans un browser de l'usage de backend.php.
 				rona.HttpContentType = "text/html"
@@ -125,7 +125,7 @@ pour maintenir la compatibilit&eacute; avec les logiciels de changement de prix 
 			rona.FlushHttp(0)
 		}
 	}
-	if rona.IsShell() { 
+	if rona.IsShell() {
 		//Dans les variables d'environnement, nous avons la variable $HOME qui nous indique que le programme est lancé via un shell
 		//Donc, s'exécuter en tant que 'cron' (voir la methode Cron dans le package Rona.)
 		rona.Cron()

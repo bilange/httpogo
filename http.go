@@ -13,6 +13,8 @@ usager UNIX non-root.
 
 // TODO: Support pour .bin et/ou .cgi dans le dossier comme office de 
 //       index.html??
+// TODO: Configurer php.ini (via PHP_INI_PATH), et dans php.ini configurer
+//       doc_root dans le php.ini: http://ca2.php.net/manual/en/ini.core.php#ini.doc-root
 
 package main
 
@@ -381,10 +383,13 @@ func phpHandler(w http.ResponseWriter, req *http.Request, script string) {
 		Args: []string{req.URL.Path},
 		Env: []string{
 			"REDIRECT_STATUS=200",
-			//"SCRIPT_FILENAME=" + path.Join(pwd, req.URL.Path),
-			//"SCRIPT_NAME=" + path.Join(pwd, req.URL.Path),
+			//original, working for dummy files:
+			//"SCRIPT_FILENAME=" + path.Join(pwd, script),
+			//"SCRIPT_NAME=" + path.Join(pwd, script),
+
 			"SCRIPT_FILENAME=" + path.Join(pwd, script),
-			"SCRIPT_NAME=" + path.Join(pwd, script),
+			"SCRIPT_NAME=" + script,
+			//"PHP_SELF=" + script, //PHP automagically appends PHP_SELF's value
 		},
 	}
 	errorLog(LOG_DEBUG, host, fmt.Sprintf("CGI Handler: %#v", cgiHandler))

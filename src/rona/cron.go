@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -284,17 +285,17 @@ func ogc_rapport(imprimante string, rapports []Rapport, attachmentExtension stri
 //le code source pour comprendre la logique.
 func ogc_transfert() {
 
-	ventestemp := Rapport{Titre: "Test SQL dans l'email éèê", Parametres: "doc_03", EMail: []string{"eric.belanger@ronasherbrooke.com"}}
-	ogc_sql("0", []Rapport{ventestemp}, "")
+	//ventestemp := Rapport{Titre: "Test SQL dans l'email éèê", Parametres: "doc_03", EMail: []string{"eric.belanger@ronasherbrooke.com"}}
+	//ogc_sql("0", []Rapport{ventestemp}, "")
 
-	return
+	//return
 
 	/*    REAL CODE BELOW     */
 
 	//Exécution des rapports quotidiens:
 	sansCodeUPC := Rapport{Titre: "Liste des items sans code UPC", Parametres: "inv_rona/aerr_inv 1114 \"%\" \"\" \"97\" \"O\"", EMail: []string{"info.05787@rona.ca"}}
 	horsIntervalles := Rapport{Titre: "Transactions marge hors-intervalles", Parametres: "car/arevdc2 1114 \"1\" \"%\" \"%\" \"" + ogcDateEn(relativeDays(-1)) + "\" \"" + ogcDateEn(relativeDays(-1)) + "\" 1 90 \"\" \"ZZZZZZZZZZ\"", EMail: []string{"contr.05787@rona.ca", "compt.05787@rona.ca", "dga.05787@rona.ca", "info.05787@rona.ca"}}
-	ventes := Rapport{Titre: "Analyse des ventes par division du " + ogcDateFr(time.Now()), Parametres: "car/aanal_maj3 1114 \"" + ogcDateEn(relativeDays(-1)) + "\" \"" + ogcDateEn(relativeDays(-1)) + "\" \"\" \"ZZZ\" \"%\"", EMail: []string{"dms.05787@rona.ca", "dop.05787@rona.ca", "dmm.05787@rona.ca", "dga.05787@rona.ca", "dg.05787@rona.ca", "paie.05787@rona.ca", "info.05787@rona.ca", "srh.05787@rona.ca", "contr.05787@rona.ca", "compt.05787@rona.ca"}}
+	ventes := Rapport{Titre: "Analyse des ventes par division du " + ogcDateFr(relativeDays(-1)), Parametres: "car/aanal_maj3 1114 \"" + ogcDateEn(relativeDays(-1)) + "\" \"" + ogcDateEn(relativeDays(-1)) + "\" \"\" \"ZZZ\" \"%\"", EMail: []string{"dms.05787@rona.ca", "dop.05787@rona.ca", "dmm.05787@rona.ca", "dga.05787@rona.ca", "dg.05787@rona.ca", "paie.05787@rona.ca", "info.05787@rona.ca", "srh.05787@rona.ca", "contr.05787@rona.ca", "compt.05787@rona.ca"}}
 	ogc_rapport("0", []Rapport{sansCodeUPC, horsIntervalles, ventes}, "")
 
 	switch int(time.Now().Weekday()) {
@@ -347,9 +348,11 @@ func ogc_transfert() {
 		ogc_sql("0", []Rapport{retoursSF}, "")
 
 	case 2: //Mardi
-		// PB_21
-		pb21 := Rapport{Titre: "Liste des produits en code de changement de prix #21", Parametres: "PB_21", EMail: []string{"info.05787@rona.ca", "dga.05787@rona.ca", "dop.05787@rona.ca", "dmm.05787@rona.ca", "dms.05787@rona.ca"}}
-		ogc_sql("0", []Rapport{pb21}, "")
+		// PB_21 (ancien rapport)
+		//pb21 := Rapport{Titre: "Liste des produits en code de changement de prix #21", Parametres: "PB_21", EMail: []string{"info.05787@rona.ca", "dga.05787@rona.ca", "dop.05787@rona.ca", "dmm.05787@rona.ca", "dms.05787@rona.ca"}}
+		//ogc_sql("0", []Rapport{pb21}, "")
+		rs_barre := Rapport{Titre: "Liste des produits avec prix barrés", Parametres: "sys1/MAGASIN/rs_barre", EMail: []string{"info.05787@rona.ca", "dga.05787@rona.ca", "dmm.05787@rona.ca", "dms.05787@rona.ca", "dop.05787@rona.ca"}}
+		ogc_rapport("0", []Rapport{rs_barre}, "")
 
 		//Inventaire des caisses
 		invcaisse := Rapport{Titre: "Inventaire des caisses", Parametres: "invcaisse", EMail: []string{"info.05787@rona.ca"}}
@@ -379,6 +382,15 @@ func ogc_transfert() {
 	case 6: //Samedi
 		//fmt.Println("Samedi")
 	}
+}
+
+func ventes_IBM_fetch_total(cleanedSlice []string) string {
+	for _, v := range cleanedSlice {
+		if strings.HasPrefix(v, "Total") {
+			return v
+		}
+	}
+	return ""
 }
 
 //Récupère les ventes d'OGC. OGC de son côté appelle IBM pour obtenir les ventes.
@@ -420,12 +432,19 @@ func ventes_IBM_fetch() string {
 		//sur la ligne result_slice plus bas.
 		r, err := regexp.Compile("([0-9]{2})\\s*([0-9]*)\\s*([0-9.]*)\\s%#\\s*([0-9.]*)\\s*([0-9.]*)\\s%")
 		if err == nil {
-			rapport += fmt.Sprintf("\tNombre\tPourcent\t\t\tPourcent\n")
-			rapport += fmt.Sprintf("Dept\tItems\tItems\t  Ventes\t\tVentes\n")
-			for _, l := range cleanedSlice[:len(cleanedSlice)-2] {
+			rapport += fmt.Sprintf("\tNombre\tPourcent\t\tPourcent\n")
+			rapport += fmt.Sprintf("Dept\tItems\tItems\t  Ventes\tVentes\n\n")
+			//fmt.Printf("%#v\n", cleanedSlice[:len(cleanedSlice)-1])
+			for _, l := range cleanedSlice[:len(cleanedSlice)-1] {
 				result_slice := r.FindAllStringSubmatch(l, -1)
+				if result_slice == nil {
+					continue //no match
+				}
 				line := ""
-				for i := 1; i < len(result_slice[0])+1; i++ {
+				//for i := 1; i < len(result_slice[0])+1; i++ {
+				//fmt.Printf("Len: %d\n", len(result_slice[0]))
+				for i := 1; i < len(result_slice[0]); i++ {
+					//fmt.Printf("\t#%d pour %#v\n", i, result_slice[0][i])
 					switch i {
 					case 1: //Departement
 						line += fmt.Sprintf("%2s\t", result_slice[0][i])
@@ -437,16 +456,29 @@ func ventes_IBM_fetch() string {
 						line += fmt.Sprintf("%8s$\t", result_slice[0][i])
 					case 5: //Ventes %
 						line += fmt.Sprintf("%5s%%", result_slice[0][i])
+					default:
+						//Ignore.
 					}
 				}
 				rapport += fmt.Sprintf("%s\n", line)
 			}
 		} //Else ignoré: compilation de mon regex marche.
 
-		rTotal, errTotal := regexp.Compile("Total\\s([0-9]*)\\s#\\s\\$([0-9.]*)")
+		//rTotal, errTotal := regexp.Compile("Total\\s([0-9]*)\\s#[\\s]*\\$([0-9.]*)")
+		rTotal, errTotal := regexp.Compile("Total[\\s]*([0-9]*)[\\s]*#[\\s]*\\$([0-9.]*)")
 		if errTotal == nil {
-			total_slice := rTotal.FindAllStringSubmatch(cleanedSlice[len(cleanedSlice)-2], -1)
-			rapport += fmt.Sprintf("\nTotal d'items: %s\tTotal ventes: %s$\n", total_slice[0][1], total_slice[0][2])
+			//total_slice := rTotal.FindAllStringSubmatch(cleanedSlice[len(cleanedSlice)-2], -1)
+			total_slice := rTotal.FindAllStringSubmatch(ventes_IBM_fetch_total(cleanedSlice), -1)
+
+			// DEBUG:
+			//fmt.Printf("Found: %#v\n", ventes_IBM_fetch_total(cleanedSlice))
+			//fmt.Printf("Total_slice: %#v\n", total_slice)
+
+			if total_slice != nil {
+				rapport += fmt.Sprintf("\nTotal d'items: %s\tTotal ventes: %s$\n", total_slice[0][1], total_slice[0][2])
+			} else {
+				rapport += fmt.Sprintf("\n%s\n", ventes_IBM_fetch_total(cleanedSlice))
+			}
 		}
 		return rapport
 	}
@@ -478,13 +510,18 @@ func ventes_IBM(emails []string) {
 
 func Cron() {
 	if len(os.Args) == 1 {
-		usage := `Usage: <executable> <ogc_transfert>|<ogc_rapport_ventes_online>
+		usage := `Usage: <executable> action=<ogc_transfert>|<ogc_ventes>
 
 	ogc_transfert == Transfert quotidien des tables Informix d'OGC sur MySQL (Hosted local)
 	ogc_ventes == Fetch des ventes d'IBM pour envoi aux directeurs.
 		`
 		fmt.Println(usage)
 	}
+
+	//Question qu'on puisse executer "./ogcunload.ex" plus tard, changer pour le repertoire
+	//ou on execute intranet.
+	os.Chdir(filepath.Dir(os.Args[0]))
+
 	for _, v := range os.Args {
 		if strings.Index(v, "action=") == 0 { //si 'action=' commence le string...
 			action := strings.Split(v, "=")
@@ -492,6 +529,7 @@ func Cron() {
 			case len(action) == 1:
 				os.Exit(0)
 			case action[1] == "ogc_transfert":
+				ogc_unload([]string{"inv1", "inv2", "pritel", "prix1"})
 				ogc_transfert()
 
 			case action[1] == "ogc_ventes":
@@ -500,8 +538,34 @@ func Cron() {
 					"info.05787@rona.ca",
 					"renelle.anctil@ronasherbrooke.com",
 				})
+			case action[1] == "test":
+				//rs_barre := Rapport{Titre: "Liste des produits avec prix barrés", Parametres: "sys1/MAGASIN/rs_barre", EMail: []string{"eric.belanger@ronasherbrooke.com"}}
+				//ogc_rapport("0", []Rapport{rs_barre}, "")
+				//ventes_IBM([]string{
+				//"eric.belanger@ronasherbrooke.com",
+				//})
+				//ogc_unload([]string{"inv1", "inv2", "pritel", "prix1"})
+				ventes_IBM([]string{"eric.belanger@ronasherbrooke.com"})
+
 			case action[1] == "ogc_gratteux":
 				//SVP Entrer les e-mails un a la suite de l'autre. 
+				ventes_IBM([]string{
+					"informatique@ronasherbrooke.com",
+					"dga.05787@rona.ca",
+					"renelle.anctil@ronasherbrooke.com",
+				})
+			}
+		} else {
+			switch v {
+			case "-t":
+				ogc_unload([]string{"inv1", "inv2", "pritel", "prix1"})
+				ogc_transfert()
+			case "-v":
+				ventes_IBM([]string{
+					"info.05787@rona.ca",
+					"renelle.anctil@ronasherbrooke.com",
+				})
+			case "-g":
 				ventes_IBM([]string{
 					"informatique@ronasherbrooke.com",
 					"dga.05787@rona.ca",
