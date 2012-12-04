@@ -153,14 +153,44 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SPECIAL: Deals with 'wildcard PHP files' (or binary), aka: 
+	// http://host/whatever.php/fake/directory . This request HAS to
+	// be passed to whatever.php.
+	sfileAbsolute := strings.Split(fileAbsolute, string(os.PathSeparator))
+	wildcardDirFilename := ""
+	for k, v := range sfileAbsolute {
+		if k == 0 {
+			continue
+		}
+		wildcardDirFilename = wildcardDirFilename + string(filepath.Separator) + v
+
+		//Handling php files
+		isdir, _ := fileIsDir(wildcardDirFilename)
+		if strings.HasSuffix(wildcardDirFilename, ".php") == true && !isdir {
+			errorLog(LOG_DEBUG, host, fmt.Sprintf("Serving wildcard PHP file, %s", wildcardDirFilename))
+			//phpHandler(w, r, v)
+			extra := strings.Replace(fileAbsolute, wildcardDirFilename, "", 1)
+			phpWildcardHandler(w, r, strings.Replace(wildcardDirFilename, vHostFolder, "", 1), extra)
+			return
+		}
+
+		//CGI binaries (potentially insecure???)
+		isexec, _ := fileIsExecutable(wildcardDirFilename)
+		if !isdir && isexec {
+			executableHandler(w, r, r.URL.Path)
+		}
+	}
+
 	//For not found files (exception: markdown 'source' files that are later
 	//passed with the original unparsed .md file)
+	errorLog(LOG_DEBUG, host, "Avant File Exists")
 	fexists, _ := fileExists(fileAbsolute)
 	if fexists == false && !strings.HasSuffix(r.URL.Path, ".md.txt") {
 		accessLog(vHostFolder, r, 404)
 		fileNotFoundHandler(w, r)
 		return
 	}
+	errorLog(LOG_DEBUG, host, "Apres File Exists")
 
 	authFile := needsAuth(vHostFolder, r.URL.Path)
 	authPassed := false
@@ -236,6 +266,11 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		strings.HasPrefix(mimeType, "text/x-sh"), phpActuallyBinary:
 		accessLog(vHostFolder, r, 200)
 		executableHandler(w, r, r.URL.Path)
+		return
+	case strings.HasSuffix(r.URL.Path, ".svg"): //Bad header returned (xml) if left unhandled.
+		w.Header().Add("Content-Type", "image/svg+xml")
+		accessLog(vHostFolder, r, 200)
+		http.ServeFile(w, r, filepath.Join(vHostFolder, r.URL.Path))
 		return
 	case strings.HasPrefix(mimeType, "image"),
 		strings.HasPrefix(mimeType, "text"),
@@ -360,6 +395,45 @@ func markdownHandler(w http.ResponseWriter, req *http.Request, file string, prin
 
 }
 
+//phpWildcardHandler deals with PHP files that ACTS LIKE A DIRECTORY.
+func phpWildcardHandler(w http.ResponseWriter, req *http.Request, script string, extra string) {
+	pwd := workingDirectory
+
+	hostSplit := strings.Split(req.Host, ":")
+	host := hostSplit[0]
+
+	vHostFolder := path.Join(pwd, host)
+	if ok, _ := fileIsDir(vHostFolder); ok {
+		pwd = vHostFolder
+	} else {
+		pwd = path.Join(pwd, defaultVHost)
+	}
+
+	cgiHandler := cgi.Handler{
+		Path: path.Join(workingDirectory, "files/php-cgi"), //TODO: Variable?
+		Dir:  pwd,
+		Root: pwd,
+		//Args: []string{req.URL.Path},
+		Env: []string{
+			"REDIRECT_STATUS=200",
+			//original, working for dummy files:
+			//"SCRIPT_FILENAME=" + path.Join(pwd, script),
+			//"SCRIPT_NAME=" + path.Join(pwd, script),
+
+			"SCRIPT_FILENAME=" + path.Join(pwd, script), //Doit etre le OS ABSOLUTE php file path
+			"SCRIPT_NAME=" + script,                     //Doit etre le WEB ABSOLUTE php file path
+			"REQUEST_URI=" + req.RequestURI,
+			"DOCUMENT_ROOT=" + pwd,
+			"PATH_INFO=" + extra,
+			"PATH_TRANSALTED=" + path.Join(pwd, extra),
+			//"PATH_TRANSALTED" + strings.Replace(path.Join(pwd, script), script, extra, 1)
+			"PHP_SELF=" + req.RequestURI, //PHP automagically appends PHP_SELF's value??
+		},
+	}
+	errorLog(LOG_DEBUG, host, fmt.Sprintf("CGI Handler: %#v", cgiHandler))
+	cgiHandler.ServeHTTP(w, req)
+}
+
 //phpHandler deals with PHP files. Warning, this blindly assumes there's a 
 //php-cgi file under the 'files' directory contained in the -root command
 //argument. TODO.
@@ -380,16 +454,18 @@ func phpHandler(w http.ResponseWriter, req *http.Request, script string) {
 		Path: path.Join(workingDirectory, "files/php-cgi"), //TODO: Variable?
 		Dir:  pwd,
 		Root: pwd,
-		Args: []string{req.URL.Path},
+		//Args: []string{req.URL.Path},
 		Env: []string{
 			"REDIRECT_STATUS=200",
 			//original, working for dummy files:
 			//"SCRIPT_FILENAME=" + path.Join(pwd, script),
 			//"SCRIPT_NAME=" + path.Join(pwd, script),
 
-			"SCRIPT_FILENAME=" + path.Join(pwd, script),
-			"SCRIPT_NAME=" + script,
-			//"PHP_SELF=" + script, //PHP automagically appends PHP_SELF's value
+			"SCRIPT_FILENAME=" + path.Join(pwd, script), //Doit etre le OS ABSOLUTE php file path
+			"SCRIPT_NAME=" + script,                     //Doit etre le WEB ABSOLUTE php file path
+			"REQUEST_URI=" + req.RequestURI,
+			"DOCUMENT_ROOT=" + pwd,
+			"PHP_SELF=" + req.RequestURI, //PHP automagically appends PHP_SELF's value??
 		},
 	}
 	errorLog(LOG_DEBUG, host, fmt.Sprintf("CGI Handler: %#v", cgiHandler))
@@ -599,7 +675,7 @@ func fileExists(path string) (bool, error) {
 	if os.IsNotExist(err) {
 		return false, nil
 	}
-	return false, err
+	return false, nil
 }
 
 //Encodes a string as base64.
