@@ -183,14 +183,12 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 
 	//For not found files (exception: markdown 'source' files that are later
 	//passed with the original unparsed .md file)
-	errorLog(LOG_DEBUG, host, "Avant File Exists")
 	fexists, _ := fileExists(fileAbsolute)
 	if fexists == false && !strings.HasSuffix(r.URL.Path, ".md.txt") {
 		accessLog(vHostFolder, r, 404)
 		fileNotFoundHandler(w, r)
 		return
 	}
-	errorLog(LOG_DEBUG, host, "Apres File Exists")
 
 	authFile := needsAuth(vHostFolder, r.URL.Path)
 	authPassed := false
@@ -430,7 +428,7 @@ func phpWildcardHandler(w http.ResponseWriter, req *http.Request, script string,
 			"PHP_SELF=" + req.RequestURI, //PHP automagically appends PHP_SELF's value??
 		},
 	}
-	errorLog(LOG_DEBUG, host, fmt.Sprintf("CGI Handler: %#v", cgiHandler))
+	errorLog(LOG_DEBUG, host, fmt.Sprintf("phpWildcardHandler: %#v", cgiHandler))
 	cgiHandler.ServeHTTP(w, req)
 }
 
